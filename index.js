@@ -26,7 +26,6 @@ const client = new Client({
 /* ================= STORAGE ================= */
 const DB_FILE = "./tickets.json";
 let db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-
 const saveDB = () =>
   fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 
@@ -51,17 +50,24 @@ client.once("ready", async () => {
       name: "ticket",
       description: "ticket management",
       options: [
-        { name: "claim", type: 1, description: "claim ticket" },
-        { name: "close", type: 1, description: "close ticket" },
-        { name: "reopen", type: 1, description: "reopen ticket" },
+        { type: 1, name: "claim", description: "claim ticket" },
+        { type: 1, name: "close", description: "close ticket" },
+        { type: 1, name: "reopen", description: "reopen ticket" },
         {
-          name: "rename",
           type: 1,
+          name: "rename",
           description: "rename ticket",
-          options: [{ name: "name", type: 3, required: true }]
+          options: [
+            {
+              type: 3,
+              name: "name",
+              description: "new ticket name",
+              required: true
+            }
+          ]
         },
-        { name: "transcript", type: 1, description: "export transcript" },
-        { name: "delete", type: 1, description: "delete ticket" }
+        { type: 1, name: "transcript", description: "export transcript" },
+        { type: 1, name: "delete", description: "delete ticket" }
       ]
     }
   ], process.env.GUILD_ID);
@@ -81,9 +87,7 @@ client.on("interactionCreate", async (i) => {
 
   const embed = new EmbedBuilder()
     .setTitle("🎟️ ᴡʙ ▸ ᴘᴀʟᴀᴄᴇ ᴛɪᴄᴋᴇᴛꜱ")
-    .setDescription(
-      "🎁 ɢɪᴠᴇᴀᴡᴀʏ ᴄʟᴀɪᴍ\n🤝 ᴘᴀʀᴛɴᴇʀ\n❓ ꜱᴜᴘᴘᴏʀᴛ"
-    )
+    .setDescription("🎁 ɢɪᴠᴇᴀᴡᴀʏ\n🤝 ᴘᴀʀᴛɴᴇʀ\n❓ ꜱᴜᴘᴘᴏʀᴛ")
     .setColor(0x5865F2);
 
   const row = new ActionRowBuilder().addComponents(
