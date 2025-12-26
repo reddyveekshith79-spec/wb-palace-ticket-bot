@@ -1,18 +1,18 @@
 const {
-  Client,
-  GatewayIntentBits,
-  PermissionsBitField,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder,
-  ChannelType,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActivityType
+  Client, GatewayIntentBits, PermissionsBitField, ActionRowBuilder,
+  ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType,
+  ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType,
+  Partials, AttachmentBuilder
 } = require("discord.js");
 const fs = require("fs");
+const path = require("path");
+require("dotenv").config();
+
+/* ================= CONFIGURATION ================= */
+const {
+  TOKEN, GUILD_ID, STAFF_ROLE_ID, ADMIN_ROLE_ID,
+  TICKET_CATEGORY_ID, LOG_CHANNEL_ID
+} = process.env;
 
 const client = new Client({
   intents: [
@@ -20,229 +20,221 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
-  ]
+  ],
+  partials: [Partials.Channel, Partials.Message]
 });
 
-/* ================= STORAGE ================= */
-const DB_FILE = "./tickets.json";
-let db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-const saveDB = () =>
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+/* ================= DATABASE LOGIC ================= */
+const DB_FILE = path.join(__dirname, "tickets.json");
+let db = { lastId: 0, tickets: {} };
 
-/* ================= READY ================= */
-client.once("ready", async () => {
-  console.log(`🎟️ ᴛɪᴄᴋᴇᴛ ʙᴏᴛ ᴏɴʟɪɴᴇ ᴀꜱ ${client.user.tag}`);
+const loadDB = () => {
+  if (fs.existsSync(DB_FILE)) {
+    db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+  }
+};
+const saveDB = () => fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+loadDB();
 
-  client.user.setPresence({
-    activities: [{
-      name: "🛡️ ᴍᴀɴᴀɢɪɴɢ ᴛɪᴄᴋᴇᴛꜱ • ᴡʙ ▸ ᴘᴀʟᴀᴄᴇ",
-      type: ActivityType.Playing
-    }],
-    status: "online"
-  });
+/* ================= UI COMPONENTS ================= */
+const COLORS = {
+  blue: 0x5865f2,
+  green: 0x2ecc71,
+  red: 0xe74c3c,
+  yellow: 0xf1c40f,
+  gray: 0x95a5a6
+};
 
-  await client.application.commands.set([
-    {
-      name: "tickets",
-      description: "open ticket panel"
-    },
-    {
-      name: "ticket",
-      description: "ticket management",
-      options: [
-        { type: 1, name: "claim", description: "claim ticket" },
-        { type: 1, name: "close", description: "close ticket" },
-        { type: 1, name: "reopen", description: "reopen ticket" },
-        {
-          type: 1,
-          name: "rename",
-          description: "rename ticket",
-          options: [
-            {
-              type: 3,
-              name: "name",
-              description: "new ticket name",
-              required: true
-            }
-          ]
-        },
-        { type: 1, name: "transcript", description: "export transcript" },
-        { type: 1, name: "delete", description: "delete ticket" }
-      ]
-    }
-  ], process.env.GUILD_ID);
-});
-
-/* ================= UTIL ================= */
-const isStaff = (m) =>
-  m.roles.cache.has(process.env.STAFF_ROLE_ID) ||
-  m.roles.cache.has(process.env.ADMIN_ROLE_ID);
-
-/* ================= TICKET PANEL ================= */
-client.on("interactionCreate", async (i) => {
-  if (!i.isChatInputCommand() || i.commandName !== "tickets") return;
-
-  if (!i.member.permissions.has(PermissionsBitField.Flags.Administrator))
-    return i.reply({ content: "❌ ᴀᴅᴍɪɴ ᴏɴʟʏ", ephemeral: true });
-
-  const embed = new EmbedBuilder()
-    .setTitle("🎟️ ᴡʙ ▸ ᴘᴀʟᴀᴄᴇ ᴛɪᴄᴋᴇᴛꜱ")
-    .setDescription("🎁 ɢɪᴠᴇᴀᴡᴀʏ\n🤝 ᴘᴀʀᴛɴᴇʀ\n❓ ꜱᴜᴘᴘᴏʀᴛ")
-    .setColor(0x5865F2);
-
+const buildTicketControls = (isClosed = false, isClaimed = false) => {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("giveaway").setLabel("🎁 ɢɪᴠᴇᴀᴡᴀʏ").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("partner").setLabel("🤝 ᴘᴀʀᴛɴᴇʀ").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("support").setLabel("❓ ꜱᴜᴘᴘᴏʀᴛ").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder()
+      .setCustomId("claim")
+      .setLabel(isClaimed ? "ᴄʟᴀɪᴍᴇᴅ" : "✅ ᴄʟᴀɪᴍ")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(isClaimed || isClosed),
+    new ButtonBuilder()
+      .setCustomId("close")
+      .setLabel("🔒 ᴄʟᴏꜱᴇ")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(isClosed),
+    new ButtonBuilder()
+      .setCustomId("transcript")
+      .setLabel("📄 ᴛʀᴀɴꜱᴄʀɪᴘᴛ")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("delete_confirm")
+      .setLabel("🗑️ ᴅᴇʟᴇᴛᴇ")
+      .setStyle(ButtonStyle.Danger)
   );
+  return row;
+};
 
-  i.reply({ embeds: [embed], components: [row] });
+/* ================= EVENT HANDLERS ================= */
+client.once("ready", () => {
+  console.log(`🚀 ${client.user.tag} is ready.`);
+  client.user.setActivity("🎟️ Support Tickets", { type: ActivityType.Watching });
 });
 
-/* ================= BUTTON → MODAL ================= */
-client.on("interactionCreate", async (i) => {
-  if (!i.isButton()) return;
-
-  const modal = new ModalBuilder()
-    .setCustomId(`modal_${i.customId}`)
-    .setTitle("ᴛɪᴄᴋᴇᴛ ꜰᴏʀᴍ");
-
-  const add = (id, label, style) =>
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setRequired(true)
-    );
-
-  if (i.customId === "giveaway") {
-    modal.addComponents(
-      add("q1", "ᴡʜᴀᴛ ᴅɪᴅ ʏᴏᴜ ᴡɪɴ / ʜᴏᴡ ᴍᴜᴄʜ", TextInputStyle.Short),
-      add("q2", "ᴡʜᴏ ʜᴏꜱᴛᴇᴅ ᴛʜᴇ ɢɪᴠᴇᴀᴡᴀʏ", TextInputStyle.Short)
-    );
+client.on("interactionCreate", async (interaction) => {
+  try {
+    if (interaction.isChatInputCommand()) handleSlash(interaction);
+    if (interaction.isButton()) handleButtons(interaction);
+    if (interaction.isModalSubmit()) handleModal(interaction);
+  } catch (err) {
+    console.error("Interaction Error:", err);
   }
-
-  if (i.customId === "partner") {
-    modal.addComponents(
-      add("q1", "ʜᴏᴡ ᴍᴀɴʏ ᴍᴇᴍʙᴇʀꜱ ᴅᴏᴇꜱ ʏᴏᴜʀ ꜱᴇʀᴠᴇʀ ʜᴀᴠᴇ", TextInputStyle.Short),
-      add("q2", "ᴅᴏ ʏᴏᴜ ᴀɢʀᴇᴇ ᴡɪᴛʜ ᴏᴜʀ ʀᴇQᴜɪʀᴇᴍᴇɴᴛꜱ (ʏᴇꜱ / ɴᴏ)", TextInputStyle.Short)
-    );
-  }
-
-  if (i.customId === "support") {
-    modal.addComponents(
-      add("q1", "ᴡʜᴀᴛ ᴅᴏ ʏᴏᴜ ɴᴇᴇᴅ ʜᴇʟᴘ ᴡɪᴛʜ", TextInputStyle.Paragraph)
-    );
-  }
-
-  await i.showModal(modal);
 });
 
-/* ================= MODAL SUBMIT ================= */
-client.on("interactionCreate", async (i) => {
-  if (!i.isModalSubmit()) return;
+/* ================= FUNCTIONALITY ================= */
 
-  const type = i.customId.replace("modal_", "");
-  const guild = i.guild;
-  const user = i.user;
+async function handleSlash(interaction) {
+  if (interaction.commandName === "tickets") {
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+      return interaction.reply({ content: "Admin only.", ephemeral: true });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle("🎟️ WB Palace Support")
+      .setDescription("Click a button below to open a ticket.\n\n🎁 **Giveaway**\n🤝 **Partnership**\n❓ **General Support**")
+      .setColor(COLORS.blue)
+      .setThumbnail(interaction.guild.iconURL());
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("btn_giveaway").setLabel("Giveaway").setStyle(ButtonStyle.Success).setEmoji("🎁"),
+      new ButtonBuilder().setCustomId("btn_partner").setLabel("Partner").setStyle(ButtonStyle.Primary).setEmoji("🤝"),
+      new ButtonBuilder().setCustomId("btn_support").setLabel("Support").setStyle(ButtonStyle.Secondary).setEmoji("❓")
+    );
+
+    await interaction.reply({ embeds: [embed], components: [row] });
+  }
+}
+
+async function handleButtons(interaction) {
+  const { customId, guild, channel, member, user } = interaction;
+
+  // 1. Ticket Creation Buttons
+  if (customId.startsWith("btn_")) {
+    const type = customId.replace("btn_", "");
+    return showTicketModal(interaction, type);
+  }
+
+  // 2. Management Buttons
+  const ticket = db.tickets[channel.id];
+  if (!ticket) return;
+
+  const isStaff = member.roles.cache.has(STAFF_ROLE_ID) || member.roles.cache.has(ADMIN_ROLE_ID);
+  if (!isStaff) return interaction.reply({ content: "Only staff can use these buttons.", ephemeral: true });
+
+  switch (customId) {
+    case "claim":
+      ticket.claimedBy = user.id;
+      saveDB();
+      await channel.setName(`claimed-${ticket.id}`);
+      await interaction.update({ components: [buildTicketControls(false, true)] });
+      await channel.send({ 
+        embeds: [new EmbedBuilder().setColor(COLORS.green).setDescription(`✅ This ticket has been claimed by <@${user.id}>`)] 
+      });
+      break;
+
+    case "close":
+      ticket.closed = true;
+      saveDB();
+      await channel.permissionOverwrites.edit(ticket.user, { ViewChannel: false });
+      await interaction.reply({ 
+        embeds: [new EmbedBuilder().setColor(COLORS.yellow).setDescription("🔒 Ticket closed. User access removed.")] 
+      });
+      await interaction.editReply({ components: [buildTicketControls(true, !!ticket.claimedBy)] });
+      break;
+
+    case "transcript":
+      await generateTranscript(interaction, ticket);
+      break;
+
+    case "delete_confirm":
+      // Immediate ephemeral confirmation
+      const confirmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("delete_final").setLabel("Confirm Delete").setStyle(ButtonStyle.Danger)
+      );
+      await interaction.reply({ content: "Are you sure? This cannot be undone.", components: [confirmRow], ephemeral: true });
+      break;
+
+    case "delete_final":
+      await interaction.reply("🗑️ Deleting in 3 seconds...");
+      setTimeout(() => {
+        delete db.tickets[channel.id];
+        saveDB();
+        channel.delete();
+      }, 3000);
+      break;
+  }
+}
+
+async function showTicketModal(interaction, type) {
+  const modal = new ModalBuilder().setCustomId(`modal_${type}`).setTitle(`${type.toUpperCase()} Ticket`);
+  
+  const input = new TextInputBuilder()
+    .setCustomId("reason")
+    .setLabel("Briefly explain your request")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true);
+
+  modal.addComponents(new ActionRowBuilder().addComponents(input));
+  await interaction.showModal(modal);
+}
+
+async function handleModal(interaction) {
+  const { guild, user, fields, customId } = interaction;
+  const type = customId.replace("modal_", "");
+  const reason = fields.getTextInputValue("reason");
+
+  await interaction.deferReply({ ephemeral: true });
 
   db.lastId++;
-  const ticketId = `T-${db.lastId}`;
+  const tId = db.lastId;
 
   const channel = await guild.channels.create({
-    name: `${type}-${user.username}`.toLowerCase(),
-    type: ChannelType.GuildText,
-    parent: process.env.TICKET_CATEGORY_ID,
+    name: `${type}-${tId}`,
+    parent: TICKET_CATEGORY_ID,
     permissionOverwrites: [
       { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
       { id: user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
-      { id: process.env.STAFF_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel] },
-      { id: process.env.ADMIN_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+      { id: STAFF_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel] }
     ]
   });
 
-  db.tickets[channel.id] = {
-    ticketId,
-    type,
-    user: user.id,
-    claimed: null,
-    opened: Date.now(),
-    closed: null
-  };
+  db.tickets[channel.id] = { id: tId, user: user.id, type, closed: false, createdAt: Date.now() };
   saveDB();
 
-  const answers = i.fields.fields.map(
-    (f, idx) => `**Q${idx + 1}:** ${f.value}`
-  ).join("\n\n");
-
   const embed = new EmbedBuilder()
-    .setTitle(`🎟️ ᴛɪᴄᴋᴇᴛ #${ticketId}`)
-    .setDescription("📋 ᴀɴꜱᴡᴇʀꜱ\n──────────────\n" + answers)
-    .setColor(0x2ECC71)
-    .setFooter({ text: "ꜱᴛᴀᴛᴜꜱ: ᴏᴘᴇɴ" })
+    .setTitle(`Ticket #${tId} | ${type.toUpperCase()}`)
+    .addFields(
+      { name: "User", value: `<@${user.id}>`, inline: true },
+      { name: "Reason", value: reason }
+    )
+    .setColor(COLORS.green)
     .setTimestamp();
 
-  const controls = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("claim").setLabel("✅ ᴄʟᴀɪᴍ").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("close").setLabel("🔒 ᴄʟᴏꜱᴇ").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("transcript").setLabel("📄 ᴛʀᴀɴꜱᴄʀɪᴘᴛ").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("delete").setLabel("🗑️ ᴅᴇʟᴇᴛᴇ").setStyle(ButtonStyle.Danger)
-  );
+  await channel.send({ content: `<@&${STAFF_ROLE_ID}>`, embeds: [embed], components: [buildTicketControls()] });
+  await interaction.editReply(`Ticket Created: ${channel}`);
+}
 
-  await channel.send({
-    content: `<@${user.id}> <@&${process.env.STAFF_ROLE_ID}>`,
-    embeds: [embed],
-    components: [controls]
-  });
+async function generateTranscript(interaction, ticket) {
+  const messages = await interaction.channel.messages.fetch({ limit: 100 });
+  const logContent = messages.reverse().map(m => `${m.author.tag}: ${m.content}`).join("\n");
+  
+  const buffer = Buffer.from(logContent, "utf-8");
+  const attachment = new AttachmentBuilder(buffer, { name: `transcript-ticket-${ticket.id}.txt` });
 
-  i.reply({ content: "✅ ᴛɪᴄᴋᴇᴛ ᴄʀᴇᴀᴛᴇᴅ", ephemeral: true });
-});
-
-/* ================= STAFF BUTTONS ================= */
-client.on("interactionCreate", async (i) => {
-  if (!i.isButton()) return;
-  const data = db.tickets[i.channel.id];
-  if (!data || !isStaff(i.member)) return;
-
-  if (i.customId === "claim") {
-    data.claimed = i.user.id;
-    await i.channel.setName(`claimed-${i.channel.name.split("-").slice(1).join("-")}`);
-    saveDB();
-    return i.reply(`✅ ᴄʟᴀɪᴍᴇᴅ ʙʏ ${i.user.tag}`);
-  }
-
-  if (i.customId === "close") {
-    data.closed = Date.now();
-    await i.channel.permissionOverwrites.edit(data.user, { SendMessages: false });
-    saveDB();
-    return i.reply("🔒 ᴛɪᴄᴋᴇᴛ ᴄʟᴏꜱᴇᴅ");
-  }
-
-  if (i.customId === "delete") {
-    delete db.tickets[i.channel.id];
-    saveDB();
-    return i.channel.delete();
-  }
-
-  if (i.customId === "transcript") {
-    let messages = [];
-    let last;
-    do {
-      const fetched = await i.channel.messages.fetch({ limit: 100, before: last });
-      if (!fetched.size) break;
-      messages.push(...fetched.values());
-      last = fetched.last().id;
-    } while (true);
-
-    const content = messages.reverse().map(
-      m => `[${new Date(m.createdTimestamp).toLocaleString()}] ${m.author.tag}: ${m.content}`
-    ).join("\n");
-
-    const log = await i.guild.channels.fetch(process.env.LOG_CHANNEL_ID);
-    log.send({
-      content:
-        `📄 ᴛɪᴄᴋᴇᴛ ᴛʀᴀɴꜱᴄʀɪᴘᴛ (#${data.ticketId})\n\n\`\`\`\n${content}\n\`\`\``
+  const logChannel = client.channels.cache.get(LOG_CHANNEL_ID);
+  if (logChannel) {
+    await logChannel.send({ 
+      content: `Transcript for Ticket #${ticket.id} (User: <@${ticket.user}>)`, 
+      files: [attachment] 
     });
-
-    return i.reply("📄 ᴛʀᴀɴꜱᴄʀɪᴘᴛ ꜱᴇɴᴛ");
+    interaction.reply({ content: "✅ Transcript sent to logs.", ephemeral: true });
+  } else {
+    interaction.reply({ content: "❌ Log channel not found.", ephemeral: true });
   }
-});
+}
 
-client.login(process.env.TOKEN);
+client.login(TOKEN);
